@@ -28,6 +28,10 @@ func main() {
 	// Test Case 5: User requested case
 	fmt.Println("\nTest Case 5: User Requested Case")
 	testCase5()
+
+	// Test Case 6: Large quantity distribution
+	fmt.Println("\nTest Case 6: Large Quantity Distribution")
+	testCase6()
 }
 
 func testCase1() {
@@ -154,6 +158,30 @@ func testCase5() {
 			Premiums: []distribute.InputPremium{
 				{PromotionCode: 110, QtyUse: 0.5},
 				{PromotionCode: 111, QtyUse: 0.5},
+			},
+		},
+		{
+			Product: "B",
+			Qty:     1,
+			Premiums: []distribute.InputPremium{
+				{PromotionCode: 110, QtyUse: 0.5},
+				{PromotionCode: 111, QtyUse: 0.5},
+			},
+		},
+	}
+
+	output := distribute.DistributePremiums(input)
+	printResults(input, output)
+}
+
+func testCase6() {
+	input := []distribute.InputProduct{
+		{
+			Product: "A",
+			Qty:     29,
+			Premiums: []distribute.InputPremium{
+				{PromotionCode: 110, QtyUse: 17.5},
+				{PromotionCode: 111, QtyUse: 11.4},
 			},
 		},
 		{
