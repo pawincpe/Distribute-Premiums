@@ -53,55 +53,101 @@ func DistributePremiums(products []InputProduct) []Product {
 	output := make([]Product, len(products))
 
 	for i, product := range products {
-		remainingQty := product.Qty
 		allocated := make(map[int]int)
 
-		// ขั้นตอนที่ 4: การจัดสรรครั้งแรก - จัดสรรตามสัดส่วนเดิม
-		// เรียงลำดับโปรโมชั่นตาม qtyUse (จากมากไปน้อย) เพื่อให้ความสำคัญกับโปรโมชั่นที่มีการจัดสรรมากกว่า
-		sortedPremiums := make([]InputPremium, len(product.Premiums))
-		copy(sortedPremiums, product.Premiums)
-		sort.SliceStable(sortedPremiums, func(i, j int) bool {
-			return sortedPremiums[i].QtyUse > sortedPremiums[j].QtyUse
-		})
+		// ขั้นตอนที่ 4: การจัดสรรตามสัดส่วนและเติมเศษให้ครบ
+		totalProductQty := 0.0
+		for _, premium := range product.Premiums {
+			totalProductQty += premium.QtyUse
+		}
 
-		// จัดสรรตามความจุโปรโมชั่นที่เหลือ
-		for _, premium := range sortedPremiums {
-			code := premium.PromotionCode
-			available := promotionRounded[code]
+		// 1. คำนวณสัดส่วน, ปัดเศษลง, เก็บเศษ
+		type allocInfo struct {
+			code      int
+			floorVal  int
+			frac      float64
+			available int
+		}
+		allocs := make([]allocInfo, 0, len(product.Premiums))
+		sumFloor := 0
+		for _, premium := range product.Premiums {
+			proportion := premium.QtyUse / totalProductQty
+			allocF := proportion * float64(product.Qty)
+			floorVal := int(math.Floor(allocF))
+			frac := allocF - float64(floorVal)
+			available := promotionRounded[premium.PromotionCode]
+			if floorVal > available {
+				floorVal = available
+				frac = 0
+			}
+			allocs = append(allocs, allocInfo{premium.PromotionCode, floorVal, frac, available})
+			sumFloor += floorVal
+		}
 
-			if available > 0 && remainingQty > 0 {
-				// จัดสรรอย่างน้อย 1 ถ้าโปรโมชั่นนี้มีการจัดสรรใดๆ
-				alloc := 1
-				allocated[code] = alloc
-				promotionRounded[code] -= alloc
-				remainingQty -= alloc
+		// 2. แจกจ่ายเศษที่เหลือให้ครบ Qty
+		remaining := product.Qty - sumFloor
+		for remaining > 0 && len(allocs) > 0 {
+			found := false
+			for i := 0; i < len(allocs) && remaining > 0; i++ {
+				if allocs[i].floorVal < allocs[i].available && promotionRounded[allocs[i].code] > 0 {
+					allocs[i].floorVal++
+					promotionRounded[allocs[i].code]--
+					remaining--
+					found = true
+				}
+			}
+			if !found {
+				break // ไม่มีใครรับเศษได้แล้ว
 			}
 		}
 
-		// ขั้นตอนที่ 5: การจัดสรรครั้งที่สอง - เติมส่วนที่เหลือด้วยโปรโมชั่นที่มีอยู่
-		for remainingQty > 0 {
-			// หาโปรโมชั่นที่ยังมีความจุเหลือ
-			availablePromotions := make([]int, 0)
-			for code, available := range promotionRounded {
-				if available > 0 {
-					availablePromotions = append(availablePromotions, code)
+		// 3. บันทึกผลลัพธ์
+		for _, a := range allocs {
+			if a.floorVal > 0 {
+				allocated[a.code] = a.floorVal
+			}
+		}
+
+		// 4. ตรวจสอบและปรับแก้ในบรรทัดสุดท้าย
+		totalAllocated := 0
+		for _, qty := range allocated {
+			totalAllocated += qty
+		}
+
+		// ถ้าผลรวมไม่เท่ากับ Qty ให้ปรับแก้
+		if totalAllocated != product.Qty {
+			diff := product.Qty - totalAllocated
+
+			if diff > 0 {
+				// ต้องเพิ่ม diff หน่วย
+				// หา promotion ที่มี available มากที่สุด
+				bestCode := -1
+				bestAvailable := 0
+				for code, qty := range allocated {
+					available := promotionRounded[code] + qty // จำนวนที่ยังไม่ถูกใช้
+					if available > bestAvailable {
+						bestAvailable = available
+						bestCode = code
+					}
+				}
+				if bestCode != -1 {
+					allocated[bestCode] += diff
+				}
+			} else if diff < 0 {
+				// ต้องลด diff หน่วย
+				// หา promotion ที่มี qty มากที่สุด
+				bestCode := -1
+				bestQty := 0
+				for code, qty := range allocated {
+					if qty > bestQty {
+						bestQty = qty
+						bestCode = code
+					}
+				}
+				if bestCode != -1 {
+					allocated[bestCode] += diff // diff เป็นลบอยู่แล้ว
 				}
 			}
-
-			if len(availablePromotions) == 0 {
-				break // ไม่มีโปรโมชั่นเหลือ
-			}
-
-			// เรียงลำดับตามความจุที่เหลือ (จากมากไปน้อย)
-			sort.SliceStable(availablePromotions, func(i, j int) bool {
-				return promotionRounded[availablePromotions[i]] > promotionRounded[availablePromotions[j]]
-			})
-
-			// จัดสรรให้กับโปรโมชั่นที่มีความจุเหลือมากที่สุด
-			selectedCode := availablePromotions[0]
-			allocated[selectedCode]++
-			promotionRounded[selectedCode]--
-			remainingQty--
 		}
 
 		// ขั้นตอนที่ 6: แปลง map ที่จัดสรรแล้วเป็น slice ของ Premium
